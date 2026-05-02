@@ -1,0 +1,405 @@
+openapi: 3.0.3
+info:
+  title: DroneFleet API
+  version: 0.1.0
+  description: Contract-first API for drone telemetry, missions, and operational probes.
+servers:
+  - url: http://localhost:8080
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      tags: [platform]
+      responses:
+        "200":
+          description: Service is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /ready:
+    get:
+      operationId: getReady
+      tags: [platform]
+      responses:
+        "200":
+          description: Service dependencies are ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+        "503":
+          description: Service is not ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /version:
+    get:
+      operationId: getVersion
+      tags: [platform]
+      responses:
+        "200":
+          description: Build and runtime version information.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionResponse"
+  /config:
+    get:
+      operationId: getConfig
+      tags: [platform]
+      responses:
+        "200":
+          description: Safe runtime configuration values.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigResponse"
+  /tasks/cache-warm:
+    post:
+      operationId: warmCache
+      tags: [platform]
+      responses:
+        "202":
+          description: Cache warm task accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskResponse"
+        "403":
+          description: Cache warm task is disabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/fleet:
+    get:
+      operationId: listFleet
+      tags: [fleet]
+      responses:
+        "200":
+          description: Fleet summary with drones.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FleetSummary"
+  /api/v1/fleet/{droneId}:
+    parameters:
+      - $ref: "#/components/parameters/DroneId"
+    get:
+      operationId: getDrone
+      tags: [fleet]
+      responses:
+        "200":
+          description: Drone found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Drone"
+        "404":
+          description: Drone not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/fleet/{droneId}/simulate-fault:
+    parameters:
+      - $ref: "#/components/parameters/DroneId"
+    post:
+      operationId: simulateDroneFault
+      tags: [fleet]
+      responses:
+        "200":
+          description: Fault simulated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DroneMessageResponse"
+        "404":
+          description: Drone not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/fleet/{droneId}/recover:
+    parameters:
+      - $ref: "#/components/parameters/DroneId"
+    post:
+      operationId: recoverDrone
+      tags: [fleet]
+      responses:
+        "200":
+          description: Drone recovered.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DroneMessageResponse"
+        "404":
+          description: Drone not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/fleet/{droneId}/telemetry:
+    parameters:
+      - $ref: "#/components/parameters/DroneId"
+    post:
+      operationId: updateDroneTelemetry
+      tags: [telemetry]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TelemetryUpdate"
+      responses:
+        "200":
+          description: Telemetry accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          description: Invalid telemetry payload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Drone not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/missions:
+    get:
+      operationId: listMissions
+      tags: [missions]
+      responses:
+        "200":
+          description: Mission list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissionList"
+  /api/v1/missions/{missionId}:
+    parameters:
+      - $ref: "#/components/parameters/MissionId"
+    get:
+      operationId: getMission
+      tags: [missions]
+      responses:
+        "200":
+          description: Mission found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Mission"
+        "404":
+          description: Mission not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  parameters:
+    DroneId:
+      name: droneId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: drone-001
+    MissionId:
+      name: missionId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: mission-001
+  schemas:
+    DroneStatus:
+      type: string
+      enum: [active, idle, charging, fault]
+    MissionStatus:
+      type: string
+      enum: [planned, active, completed, aborted]
+    Drone:
+      type: object
+      required: [id, name, status, battery, lat, lng, altitude]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          $ref: "#/components/schemas/DroneStatus"
+        battery:
+          type: integer
+          minimum: 0
+          maximum: 100
+        lat:
+          type: number
+          format: double
+        lng:
+          type: number
+          format: double
+        altitude:
+          type: number
+          format: double
+        missionId:
+          type: string
+    FleetSummary:
+      type: object
+      required: [total, active, faults, drones]
+      properties:
+        total:
+          type: integer
+        active:
+          type: integer
+        faults:
+          type: integer
+        drones:
+          type: array
+          items:
+            $ref: "#/components/schemas/Drone"
+    Waypoint:
+      type: object
+      required: [lat, lng, alt]
+      properties:
+        lat:
+          type: number
+          format: double
+        lng:
+          type: number
+          format: double
+        alt:
+          type: number
+          format: double
+    Mission:
+      type: object
+      required: [id, droneId, status, waypoints]
+      properties:
+        id:
+          type: string
+        droneId:
+          type: string
+        status:
+          $ref: "#/components/schemas/MissionStatus"
+        waypoints:
+          type: array
+          items:
+            $ref: "#/components/schemas/Waypoint"
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+    MissionList:
+      type: object
+      required: [total, missions]
+      properties:
+        total:
+          type: integer
+        missions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Mission"
+    TelemetryUpdate:
+      type: object
+      required: [lat, lng, altitude, battery]
+      properties:
+        lat:
+          type: number
+          format: double
+        lng:
+          type: number
+          format: double
+        altitude:
+          type: number
+          format: double
+        battery:
+          type: integer
+          minimum: 0
+          maximum: 100
+    HealthResponse:
+      type: object
+      required: [status, service, version]
+      properties:
+        status:
+          type: string
+        service:
+          type: string
+        version:
+          type: string
+    ReadyResponse:
+      type: object
+      required: [status, database]
+      properties:
+        status:
+          type: string
+        database:
+          type: string
+        dronesLoaded:
+          type: integer
+    VersionResponse:
+      type: object
+      required: [appName, environment, version, gitSha, buildTime]
+      properties:
+        appName:
+          type: string
+        environment:
+          type: string
+        version:
+          type: string
+        gitSha:
+          type: string
+        buildTime:
+          type: string
+    ConfigResponse:
+      type: object
+      required: [appName, environment, logLevel, featureCacheWarm, databaseConfigured]
+      properties:
+        appName:
+          type: string
+        environment:
+          type: string
+        logLevel:
+          type: string
+        featureCacheWarm:
+          type: boolean
+        databaseConfigured:
+          type: boolean
+    TaskResponse:
+      type: object
+      required: [status, task, executedAt]
+      properties:
+        status:
+          type: string
+        task:
+          type: string
+        executedAt:
+          type: string
+          format: date-time
+    DroneMessageResponse:
+      type: object
+      required: [message, drone]
+      properties:
+        message:
+          type: string
+        drone:
+          $ref: "#/components/schemas/Drone"
+    StatusResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string

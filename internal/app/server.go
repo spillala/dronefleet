@@ -1,109 +1,64 @@
 package app
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
 	"time"
 
-	"github.com/spillalamarri/k8s-release-demo/internal/config"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/spillala/dronefleet/internal/api"
+	"github.com/spillala/dronefleet/internal/config"
+	"github.com/spillala/dronefleet/internal/repository"
+	"github.com/spillala/dronefleet/internal/service"
 )
 
+// Server owns the HTTP layer: config, repository, service, and routing.
 type Server struct {
-	cfg    config.Config
-	logger *log.Logger
+	cfg     config.Config
+	logger  *log.Logger
+	store   repository.Store
+	service *service.Service
 }
 
-type versionResponse struct {
-	AppName     string `json:"appName"`
-	Environment string `json:"environment"`
-	Version     string `json:"version"`
-	GitSHA      string `json:"gitSha"`
-	BuildTime   string `json:"buildTime"`
+// NewServer wires the generated OpenAPI handler to the chosen repository.
+func NewServer(cfg config.Config, logger *log.Logger, repo repository.Store) *Server {
+	return &Server{
+		cfg:     cfg,
+		logger:  logger,
+		store:   repo,
+		service: service.New(cfg, logger, repo),
+	}
 }
 
-type configResponse struct {
-	AppName          string `json:"appName"`
-	Environment      string `json:"environment"`
-	LogLevel         string `json:"logLevel"`
-	FeatureCacheWarm bool   `json:"featureCacheWarm"`
-}
-
-type taskResponse struct {
-	Status     string `json:"status"`
-	Task       string `json:"task"`
-	ExecutedAt string `json:"executedAt"`
-}
-
-func NewServer(cfg config.Config, logger *log.Logger) *Server {
-	return &Server{cfg: cfg, logger: logger}
-}
-
+// Routes builds and returns the full HTTP handler.
+// Called by main.go and by tests via httptest.
 func (s *Server) Routes() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", s.handleHealth)
-	mux.HandleFunc("/readyz", s.handleReady)
-	mux.HandleFunc("/version", s.handleVersion)
-	mux.HandleFunc("/config", s.handleConfig)
-	mux.HandleFunc("/tasks/cache-warm", s.handleCacheWarm)
-	return s.loggingMiddleware(mux)
+	r := chi.NewRouter()
+
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.Timeout(30 * time.Second))
+	r.Use(s.loggingMiddleware)
+
+	api.HandlerFromMux(s.service, r)
+	r.Get("/healthz", s.service.GetHealth)
+	r.Get("/readyz", s.service.GetReady)
+
+	return r
 }
 
-func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-func (s *Server) handleReady(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
-}
-
-func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, versionResponse{
-		AppName:     s.cfg.AppName,
-		Environment: s.cfg.Environment,
-		Version:     s.cfg.Version,
-		GitSHA:      s.cfg.GitSHA,
-		BuildTime:   s.cfg.BuildTime,
-	})
-}
-
-func (s *Server) handleConfig(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, configResponse{
-		AppName:          s.cfg.AppName,
-		Environment:      s.cfg.Environment,
-		LogLevel:         s.cfg.LogLevel,
-		FeatureCacheWarm: s.cfg.FeatureCacheWarm,
-	})
-}
-
-func (s *Server) handleCacheWarm(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-
-	if !s.cfg.FeatureCacheWarm {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cache warm task disabled"})
-		return
-	}
-
-	s.logger.Printf("task=cache-warm env=%s source=api", s.cfg.Environment)
-	writeJSON(w, http.StatusAccepted, taskResponse{
-		Status:     "accepted",
-		Task:       "cache-warm",
-		ExecutedAt: time.Now().UTC().Format(time.RFC3339),
-	})
-}
-
+// loggingMiddleware logs the request method, path, status, and duration.
 func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		s.logger.Printf("method=%s path=%s remote=%s", r.Method, r.URL.Path, r.RemoteAddr)
-		next.ServeHTTP(w, r)
+		start := time.Now()
+		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		next.ServeHTTP(ww, r)
+		s.logger.Printf(
+			"method=%s path=%s status=%d duration=%dms remote=%s",
+			r.Method, r.URL.Path, ww.Status(),
+			time.Since(start).Milliseconds(), r.RemoteAddr,
+		)
 	})
-}
-
-func writeJSON(w http.ResponseWriter, status int, payload any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
 }
